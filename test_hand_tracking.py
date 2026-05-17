@@ -24,12 +24,14 @@ options = HandLandmarkerOptions(
     base_options=BaseOptions(model_asset_path=MODEL_PATH),
     running_mode=VisionRunningMode.VIDEO,
     num_hands=1,
-    min_hand_detection_confidence=0.5,
-    min_hand_presence_confidence=0.5,
-    min_tracking_confidence=0.5,
+    min_hand_detection_confidence=0.8,
+    min_hand_presence_confidence=0.8,
+    min_tracking_confidence=0.8,
 )
 
 cap = cv2.VideoCapture(0)
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
 
 if not cap.isOpened():
     print("Camera could not be opened.")
@@ -37,6 +39,13 @@ if not cap.isOpened():
 
 last_action_time = 0
 cooldown = 1.0
+
+screen_width, screen_height = pyautogui.size()
+
+prev_mouse_x, prev_mouse_y = 0, 0
+smoothening = 7
+
+pyautogui.FAILSAFE = False
 
 with HandLandmarker.create_from_options(options) as landmarker:
     while True:
@@ -65,27 +74,118 @@ with HandLandmarker.create_from_options(options) as landmarker:
                 thumb_tip = hand_landmarks[4]
                 index_tip = hand_landmarks[8]
                 middle_tip = hand_landmarks[12]
+                ring_tip = hand_landmarks[16]
+                pinky_tip = hand_landmarks[20]
 
-                index_pinch_distance = distance_between_points(
+                index_x = int(index_tip.x * width)
+                index_y = int(index_tip.y * height)
+
+                index_ThumbToIndex_distance = distance_between_points( #pinching
                     thumb_tip, index_tip, width, height
                 )
 
-                index_pinchOut_distance = distance_between_points(
-                    thumb_tip, index_tip, width, height
+                index_IndexToMiddle_distance = distance_between_points(
+                    index_tip, middle_tip, width, height
+                )
+
+                index_ThumbToMiddle_distance = distance_between_points(
+                    hand_landmarks[9], thumb_tip, width, height
+                )
+
+                index_ThumbToWrist_distance = distance_between_points(
+                    hand_landmarks[0],thumb_tip, width, height
+                )
+
+                index_IndexToWrist_distance = distance_between_points(
+                    hand_landmarks[0],index_tip, width, height
+                )
+
+                index_MiddleToWrist_distance = distance_between_points(
+                    hand_landmarks[0], index_tip, width, height
+                )
+
+                index_RingToWrist_distance = distance_between_points(
+                    hand_landmarks[0],ring_tip, width, height
+                )
+                
+                index_PinkyToWrist_distance = distance_between_points(
+                    hand_landmarks[0],pinky_tip, width, height
+                )
+
+                index_ThumbToKnuckle_distance = distance_between_points(
+                    hand_landmarks[5], thumb_tip, width, height
+                )
+
+                index_IndexToKnuckle_distance = distance_between_points(
+                    hand_landmarks[5], index_tip, width, height
+                )
+
+                index_MiddleToKnuckle_distance = distance_between_points(
+                    hand_landmarks[9], middle_tip, width, height
+                )
+
+                index_RingToKnuckle_distance = distance_between_points(
+                    hand_landmarks[13], ring_tip, width, height
+                )
+
+                index_PinkyToKnuckle_distance = distance_between_points(
+                    hand_landmarks[17], pinky_tip, width, height
                 )
 
                 current_time = time.time()
 
+                # Gesture 1: Thumb + index pinch, other fingers up = zoom in
                 if current_time - last_action_time > cooldown:
-                    if index_pinch_distance < 40:
+                    if (index_ThumbToIndex_distance < 40 and 
+                        index_MiddleToKnuckle_distance > 40 and 
+                        index_RingToKnuckle_distance > 40 and
+                        index_PinkyToKnuckle_distance > 40):
+
                         pyautogui.hotkey("ctrl", "+")
                         print("Zoom in")
                         last_action_time = current_time
 
-                    elif index_pinchOut_distance > 40:
+                    # Gesture 2: Index open, other fingers folded = zoom out
+                    elif (index_ThumbToIndex_distance > 40 and index_ThumbToMiddle_distance > 40 and
+                          index_IndexToKnuckle_distance > 40 and 
+                          index_ThumbToKnuckle_distance > 40 and
+                          index_MiddleToKnuckle_distance < 40 and 
+                          index_RingToKnuckle_distance < 40 and
+                          index_PinkyToKnuckle_distance < 40):
+
                         pyautogui.hotkey("ctrl", "-")
                         print("Zoom out")
                         last_action_time = current_time
+
+                # Gesture 3: Only index and middle up placed together = move cursor
+                if (index_IndexToKnuckle_distance > 40 and index_MiddleToKnuckle_distance > 40 and 
+                    index_IndexToWrist_distance > 40 and index_MiddleToWrist_distance > 40 and 
+                    index_IndexToMiddle_distance < 40 and
+                    (index_ThumbToKnuckle_distance < 40 or index_ThumbToWrist_distance < 40) and 
+                    (index_RingToKnuckle_distance < 40 or index_RingToWrist_distance < 40) and
+                    (index_PinkyToKnuckle_distance < 40 or index_PinkyToWrist_distance < 40)):
+
+                    # Correct mapping from camera coordinates to screen coordinates
+                    screen_x = int(index_tip.x * screen_width)
+                    screen_y = int(index_tip.y * screen_height)
+
+                    curr_mouse_x = prev_mouse_x + (screen_x - prev_mouse_x) / smoothening
+                    curr_mouse_y = prev_mouse_y + (screen_y - prev_mouse_y) / smoothening
+
+                    pyautogui.moveTo(curr_mouse_x, curr_mouse_y)
+
+                    prev_mouse_x, prev_mouse_y = curr_mouse_x, curr_mouse_y
+
+                    cv2.circle(frame, (index_x, index_y), 12, (0, 0, 255), -1)
+                    cv2.putText(
+                        frame,
+                        "Cursor Move Mode",
+                        (20, 40),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        1,
+                        (0, 255, 0),
+                        2
+                    )
 
                 # Draw landmark points
                 for landmark in hand_landmarks:
